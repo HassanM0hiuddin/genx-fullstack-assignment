@@ -35,7 +35,8 @@ class DeliveryPipeline:
         self.queue: asyncio.Queue[str] = asyncio.Queue()
 
         self.delivery_workers = _env_int("DELIVERY_WORKERS", 32)
-        self.cpu_workers = _env_int("CPU_WORKERS", max(1, min(8, (os.cpu_count() or 2) - 1)))
+        # Half the cores: leaves room for the event loop, the OS and anything else on the box.
+        self.cpu_workers = _env_int("CPU_WORKERS", max(1, min(8, (os.cpu_count() or 2) // 2)))
         self.max_attempts = _env_int("DELIVERY_MAX_ATTEMPTS", 12)
         self.backoff_base = _env_float("DELIVERY_BACKOFF_BASE", 0.2)
         self.backoff_cap = _env_float("DELIVERY_BACKOFF_CAP", 30.0)

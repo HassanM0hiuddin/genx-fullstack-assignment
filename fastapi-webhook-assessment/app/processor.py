@@ -71,4 +71,26 @@ def init_worker(parent_pid: int) -> None:
     """
     import threading
 
+    _lower_priority()
     threading.Thread(target=_exit_when_parent_dies, args=(parent_pid,), daemon=True).start()
+
+
+def _lower_priority() -> None:
+    """
+    Hashing is background work. Running it at a lower OS priority means the
+    process serving HTTP (and /health) always gets the CPU first when cores are busy.
+    """
+    import os
+    import sys
+
+    try:
+        if sys.platform == "win32":
+            import ctypes
+
+            BELOW_NORMAL_PRIORITY_CLASS = 0x00004000
+            kernel32 = ctypes.windll.kernel32
+            kernel32.SetPriorityClass(kernel32.GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS)
+        else:
+            os.nice(10)
+    except Exception:
+        pass
