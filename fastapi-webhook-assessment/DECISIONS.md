@@ -54,6 +54,15 @@ PII is removed before the row is written, so raw content never reaches the disk.
   2. Each worker creates its own process pool sized to the CPU count, so there are 4 times too many hashing processes fighting over the cores. `CPU_WORKERS` should be divided by the number of workers.
   3. All writes go through one SQLite file lock. At higher traffic the four processes will wait on each other, and eventually you get "database is locked" errors. That is the point where you need Postgres and a real queue.
 
-## Note on running the tests on Windows
+## Note on the timing checks
 
-On my Windows machine, the two timing checks (`/health` < 50ms and ingest p95 < 250ms) sit right on the limit. To check where the time goes, I ran the same test against a stub server that does no work at all (returns 202 immediately). It got the same numbers (about 250ms p95 and 170ms for `/health`). So the extra time comes from the test's httpx client opening 60 connections at once on Windows, not from the service. Measured directly, the request handler takes about 10ms, and `/health` answers in about 20ms when called with raw sockets. With the timing limits relaxed, all the correctness checks pass every time (30 rows, no duplicate rows or deliveries, 503s retried, no PII stored). On Linux or macOS the timing checks should have plenty of room.
+The two timing checks (`/health` under 50ms, ingest p95 under 250ms) depend a lot on the machine running the test.
+
+- On GitHub Actions (Linux, 4 cores) the full test passes most of the time, but some runs fail with `/health` around 60 to 80ms.
+- On my Windows laptop `/health` comes in around 180ms.
+
+To find out if this was my code, I ran the same test against a stub server that does nothing at all (it just returns 202). The stub got the same or worse numbers: 87 to 102ms for `/health` on a GitHub runner and about 170ms on Windows. I also added timing inside my server during the burst. The event loop was never blocked for more than about 19ms, and every `/health` request was handled in under 10ms. So the extra time is spent in the test's own client, which opens 60 connections at once from a single event loop. It isn't the server being blocked.
+
+With the timing limits relaxed, all the correctness checks pass every time (30 rows, no duplicate rows or deliveries, 503s retried, no PII stored).
+
+One thing I changed because of this: the hashing processes now run at a lower OS priority and only use half the cores. On small machines that keeps the web server first in line for the CPU.
