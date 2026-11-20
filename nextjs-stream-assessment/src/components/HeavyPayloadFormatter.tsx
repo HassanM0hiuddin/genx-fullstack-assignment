@@ -1,12 +1,15 @@
 "use client";
 
-import React from "react";
+import React, { memo } from "react";
 
 /**
- * Simulates an expensive markdown / syntax highlighting component.
- * Intentionally un-memoized in starter code so parent re-renders cause noticeable lag.
+ * Simulates an expensive markdown / syntax highlighting component (~12ms per render).
+ *
+ * Memoised, and the streamed text is no longer a prop: it arrives as a `summary` slot
+ * (a React element created by the parent). The element owns its own state, so token
+ * updates re-render only that element, never this formatter.
  */
-export function HeavyPayloadFormatter({ rawPayload, summaryText }: { rawPayload: string; summaryText: string }) {
+function HeavyPayloadFormatterImpl({ rawPayload, summary }: { rawPayload: string; summary: React.ReactNode }) {
   // Simulate ~12ms of synchronous formatting work per render
   const start = performance.now();
   let checksum = 0;
@@ -27,7 +30,7 @@ export function HeavyPayloadFormatter({ rawPayload, summaryText }: { rawPayload:
           minHeight: "180px",
         }}
       >
-        {summaryText || "Select an event to generate an AI incident analysis..."}
+        {summary}
       </div>
       <details open>
         <summary style={{ cursor: "pointer", color: "#94a3b8", fontSize: "13px" }}>Raw Telemetry Payload</summary>
@@ -46,3 +49,5 @@ export function HeavyPayloadFormatter({ rawPayload, summaryText }: { rawPayload:
     </div>
   );
 }
+
+export const HeavyPayloadFormatter = memo(HeavyPayloadFormatterImpl);

@@ -7,18 +7,68 @@ PII_PATTERNS = [
     re.compile(r"\b(?:\d[ -]*?){13,16}\b"),
 ]
 
+DEFAULT_ITERATIONS = 120_000
 
-def scrub_and_fingerprint(raw_text: str, blob_iterations: int = 120_000) -> tuple[str, str]:
-    """
-    Redacts common PII patterns and computes a deterministic cryptographic fingerprint.
-    CPU-bound (~40-60ms per invocation depending on host CPU).
-    """
+
+def scrub(raw_text: str) -> str:
+    """Redact common PII patterns. Cheap (microseconds), safe to run on the event loop."""
     cleaned = raw_text
     for pattern in PII_PATTERNS:
         cleaned = pattern.sub("[REDACTED]", cleaned)
+    return cleaned
 
-    digest = cleaned.encode("utf-8")
+
+def fingerprint(cleaned_text: str, blob_iterations: int = DEFAULT_ITERATIONS) -> str:
+    """
+    Deterministic cryptographic fingerprint of already-scrubbed text.
+    CPU-bound (~40-60ms) and holds the GIL (hashlib only releases it for inputs
+    larger than 2 KiB), so it must run in a separate process, never on the event loop.
+    """
+    digest = cleaned_text.encode("utf-8")
     for _ in range(blob_iterations):
         digest = hashlib.sha256(digest).digest()
+    return digest.hex()
 
-    return cleaned, digest.hex()
+
+def scrub_and_fingerprint(raw_text: str, blob_iterations: int = DEFAULT_ITERATIONS) -> tuple[str, str]:
+    """Kept for backwards compatibility: same output as the original function."""
+    cleaned = scrub(raw_text)
+    return cleaned, fingerprint(cleaned, blob_iterations)
+
+
+def warm_up() -> None:
+    """No-op submitted to each pool worker at startup so the first real job doesn't pay process spawn cost."""
+    return None
+
+
+def _exit_when_parent_dies(parent_pid: int) -> None:
+    import os
+    import sys
+    import time
+
+    if sys.platform == "win32":
+        import ctypes
+
+        SYNCHRONIZE = 0x00100000
+        INFINITE = 0xFFFFFFFF
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(SYNCHRONIZE, False, parent_pid)
+        if handle:
+            kernel32.WaitForSingleObject(handle, INFINITE)
+        os._exit(0)
+    else:
+        while os.getppid() == parent_pid:
+            time.sleep(1.0)
+        os._exit(0)
+
+
+def init_worker(parent_pid: int) -> None:
+    """
+    Pool worker initializer. If the server process is killed hard (SIGKILL, or
+    TerminateProcess on Windows) the pool never gets a chance to shut down, and
+    the worker processes would be left running as orphans. A daemon thread in each
+    worker waits for the parent to disappear and then exits the worker.
+    """
+    import threading
+
+    threading.Thread(target=_exit_when_parent_dies, args=(parent_pid,), daemon=True).start()
